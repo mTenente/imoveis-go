@@ -615,7 +615,7 @@
 
   <div class="field-group">
     <label>ID da Pasta do Drive</label>
-    <input type="text" id="folderId" value="11hRFmm7bCJt-QGcWssuVnoTE9a8QzX8j">
+    <input type="text" id="folderId" value="1wN5H6feWbW3hebFSSLw_Xstui74nOAp_">
     <p class="hint">Já preenchido com a pasta que você informou.</p>
   </div>
 
@@ -805,24 +805,46 @@ async function driveList(query, fields = 'files(id,name,mimeType,webViewLink,par
 async function sincronizarDrive() {
   mostrarLoading();
   try {
-    // 1. Lista incorporadoras (subpastas diretas)
-    const incRes = await driveList(`'${FOLDER_ID}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-    if (!incRes) return;
+    // Detecta nome da pasta raiz (incorporadora)
+    const rootRes = await fetch(`https://www.googleapis.com/drive/v3/files/${FOLDER_ID}?fields=name`, {
+      headers: { Authorization: `Bearer ${ACCESS_TOKEN}` }
+    });
+    const rootData = await rootRes.json();
+    const incorporadoraNome = rootData.name || 'City';
+
+    // Lista subpastas (empreendimentos) direto na pasta raiz
+    const empRes = await driveList(`'${FOLDER_ID}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+    if (!empRes) return;
 
     empreendimentos = [];
-    const incorporadoras = incRes.files || [];
+    const emps = empRes.files || [];
 
-    for (const inc of incorporadoras) {
-      // 2. Lista empreendimentos dentro de cada incorporadora
-      const empRes = await driveList(`'${inc.id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-      const emps = empRes?.files || [];
-
+    // Se não há subpastas, trata os arquivos da pasta raiz como um único empreendimento
+    if (emps.length === 0) {
+      const filesRes = await driveList(`'${FOLDER_ID}' in parents and trashed=false`, 'files(id,name,mimeType,webViewLink,size)');
+      const files = filesRes?.files || [];
+      const obj = parseEmpreendimento(incorporadoraNome, incorporadoraNome, FOLDER_ID,
+        `https://drive.google.com/drive/folders/${FOLDER_ID}`, files);
+      empreendimentos.push(obj);
+    } else {
       for (const emp of emps) {
-        // 3. Lista arquivos do empreendimento
+        // Lista arquivos dentro do empreendimento
         const filesRes = await driveList(`'${emp.id}' in parents and trashed=false`, 'files(id,name,mimeType,webViewLink,size)');
         const files = filesRes?.files || [];
 
-        const obj = parseEmpreendimento(emp.name, inc.name, emp.id, emp.webViewLink || `https://drive.google.com/drive/folders/${emp.id}`, files);
+        // Verifica se há subsubpastas (tipologias/plantas)
+        const subRes = await driveList(`'${emp.id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+        const subPastas = subRes?.files || [];
+        let todosArquivos = [...files];
+
+        for (const sub of subPastas) {
+          const subFilesRes = await driveList(`'${sub.id}' in parents and trashed=false`, 'files(id,name,mimeType,webViewLink,size)');
+          const subFiles = subFilesRes?.files || [];
+          todosArquivos = [...todosArquivos, ...subFiles];
+        }
+
+        const obj = parseEmpreendimento(emp.name, incorporadoraNome, emp.id,
+          emp.webViewLink || `https://drive.google.com/drive/folders/${emp.id}`, todosArquivos);
         empreendimentos.push(obj);
       }
     }
